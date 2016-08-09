@@ -1,4 +1,6 @@
-"use strict"
+/* jshint browser:true, jquery:true, strict:global, devel: true */
+/* globals Map, google */
+"use strict";
 
 var $numThreads = $(".num-threads");
 var $numAccounts = $(".num-accounts");
@@ -8,6 +10,9 @@ var $scanPercentLabel = $(".current-scan-percent");
 
 var $selectExclude = $("#exclude-pokemon");
 var excludedPokemon = [];
+
+var $selectNotify = $("#notify-pokemon");
+var notifyPokemon = [];
 
 var map;
 var scanLocations = new Map();
@@ -19,6 +24,28 @@ try {
     excludedPokemon = JSON.parse(localStorage.excludedPokemon);
     console.log(excludedPokemon);
 } catch (e) {}
+
+try {
+    notifyPokemon = JSON.parse(localStorage.notifyPokemon);
+    console.log(notifyPokemon);
+} catch (e) {}
+
+
+// exclude multi-select listener
+$selectExclude.on("change", function (e) {
+    excludedPokemon = $selectExclude.val().map(Number);
+    localStorage.excludedPokemon = JSON.stringify(excludedPokemon);
+    clearStaleMarkers();
+});
+
+
+// notify multi-select listener
+$selectNotify.on("change", function (e) {
+    notifyPokemon = $selectNotify.val().map(Number);
+    localStorage.notifyPokemon = JSON.stringify(notifyPokemon);
+
+    clearStaleMarkers();
+});
 
 
 function getFromStorage(keyName, default_value) {
@@ -40,7 +67,7 @@ document.getElementById('pokemon-checkbox').checked = getFromStorage("displayPok
 document.getElementById('gyms-checkbox').checked = getFromStorage("displayGyms", "true");
 document.getElementById('coverage-checkbox').checked = getFromStorage("displayCoverage", "true");
 
- 
+
 $.getJSON("static/locales/pokemon.en.json").done(function(data) {
     var pokeList = [];
 
@@ -53,14 +80,14 @@ $.getJSON("static/locales/pokemon.en.json").done(function(data) {
         data: pokeList
     });
     $selectExclude.val(excludedPokemon).trigger("change");
+
+    $selectNotify.select2({
+        placeholder: "Type to exclude Pokemon",
+        data: pokeList
+    });
+    $selectNotify.val(notifyPokemon).trigger("change");
 });
 
-// exclude multi-select listener
-$selectExclude.on("change", function (e) {
-    excludedPokemon = $selectExclude.val().map(Number);
-    localStorage.excludedPokemon = JSON.stringify(excludedPokemon);
-    clearStaleMarkers();
-});
 
 // Stolen from http://www.quirksmode.org/js/cookies.html
 function readCookie(name) {
@@ -100,7 +127,7 @@ function initMap() {
         streetViewControl: false,
         disableAutoPan: true
     });
-    
+
     updateScanLocations(initialScanLocations);
     updateMap();
 
@@ -395,23 +422,54 @@ function updateMap() {
                'gyms': localStorage.displayGyms},
         dataType: "json"
     }).done(function(result) {
+        var notifications = {};
+        var notificationsLength = 0;
+        var notificationIcon, notificationTitle, notificationPid;
+
         statusLabels(result["server_status"]);
 
         updateScanLocations(result['scan_locations']);
-
         $.each(result.pokemons, function(i, item){
             if (!document.getElementById('pokemon-checkbox').checked) {
                 return false; // in case the checkbox was unchecked in the meantime.
             }
 
-            if (!(item.encounter_id in map_pokemons) && 
+            if (!(item.encounter_id in map_pokemons) &&
                     excludedPokemon.indexOf(item.pokemon_id) < 0) {
                 // add marker to map and item to dict
                 if (item.marker) item.marker.setMap(null);
                 item.marker = setupPokemonMarker(item);
                 map_pokemons[item.encounter_id] = item;
+                if(notifyPokemon.indexOf(item.pokemon_id) !== -1){
+                    notifications[item.pokemon_id] = item;
+                }
             }
         });
+
+
+
+        if(notificationsLength = Object.keys(notifications).length){
+
+           if(notificationsLength === 1){
+                notificationPid = Object.keys(notifications).shift();
+                notificationIcon = document.location.origin+'/static/icons/'+notificationPid+'.png';
+                notificationTitle = notifications[notificationPid].pokemon_name + ' appeared on map.';
+           }else{
+                notificationIcon = document.location.origin+'/static/favicon.ico';
+                notificationTitle = notificationsLength+' watched pokémons appeared on map.';
+           }
+
+           Notification.requestPermission(function(permission){
+                if(permission !== 'granted'){
+                    return;
+                }
+
+                new Notification(notificationTitle, {icon: notificationIcon});
+            });
+
+           notifications = {};
+           notificationsLength = 0;
+        }
 
         $.each(result.gyms, function(i, item){
             if (!document.getElementById('gyms-checkbox').checked) {
@@ -437,11 +495,8 @@ function updateMap() {
             }
         });
 
+
         clearStaleMarkers();
-    }).fail(function() {
-        $lastRequestLabel.removeClass('label-success label-warning');
-        $lastRequestLabel.addClass('label-danger');
-        $lastRequestLabel.html("Disconnected from Server")
     });
 }
 
@@ -476,9 +531,6 @@ $('#coverage-checkbox').change(function() {
 
     scanLocations.forEach(function (scanLocation, key) {
         scanLocation.circle.setVisible(this.checked);
-    }, this);
-    scanLocations.forEach(function (scanLocation, key) {
-        scanLocation.marker.setVisible(this.checked);
     }, this);
 });
 
@@ -543,7 +595,7 @@ function statusLabels(status) {
     var timeSinceScan = status['complete-scan-time'];
     if (timeSinceScan)
         $fullScanLabel.html("Last scan in "+ formatTimeDiff(timeSinceScan))
-    
+
     var currentScanPercentString = Number((status['current-scan-percent']).toFixed(2)).toString();
     $scanPercentLabel.html("Current Scan: "+currentScanPercentString+"%");
 

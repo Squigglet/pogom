@@ -55,3 +55,8 @@ tmtagsHistory
 ##########
 pogom.db*
 config.json
+
+
+# VE #
+######
+.ve/
